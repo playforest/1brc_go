@@ -4,10 +4,14 @@ import (
 	"bufio"
 	"encoding/gob"
 	"fmt"
+	"log"
 	"os"
+	"runtime"
+	"runtime/pprof"
 	"sort"
 	"strconv"
 	"strings"
+	"testing"
 	"time"
 )
 
@@ -29,15 +33,15 @@ var cityStats map[string]Stats
 const (
 	POOLS    = 10
 	ROWS     = 1000000000
-	MAX_ROWS = 50000000
+	MAX_ROWS = 100000000
 )
 
 func main() {
-	startTime := time.Now()
+
 	cityData = make(map[string]*CityTemperatures)
 
 	cacheFile := "measurements_data_cache.gob"
-	clearCache(cacheFile)
+	// clearCache(cacheFile)
 	_, err := os.Stat(cacheFile)
 	if os.IsNotExist(err) {
 		fmt.Println("cache file not found, processing file...")
@@ -48,31 +52,56 @@ func main() {
 		loadCache(cacheFile)
 	}
 
-	fmt.Println("number of cities: %d", len(cityData))
+	// Start CPU profiling here
+	f, err := os.Create("cpu.prof")
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer f.Close()
+	if err := pprof.StartCPUProfile(f); err != nil {
+		log.Fatal(err)
+	}
+	defer pprof.StopCPUProfile()
 
+	// fmt.Println("number of cities: %d", len(cityData))
+
+	startTime := time.Now()
 	cityStats = make(map[string]Stats)
 	cities := make([]string, 0, len(cityData))
 	for cityName := range cityData {
 		cities = append(cities, cityName)
 	}
 	sort.Strings(cities)
-	fmt.Println(len(cities))
+	// fmt.Println(len(cities))
 
-	fmt.Print("{")
-
+	result := "{"
 	for i, cityName := range cities {
 		data := cityData[cityName]
 		updateStats(data)
-		fmt.Printf("%s=%.1f/%.1f/%.1f, ", cityName, cityStats[cityName].Min, cityStats[cityName].Mean, cityStats[cityName].Max)
+		result += fmt.Sprintf("%s=%.1f/%.1f/%.1f", cityName, cityStats[cityName].Min, cityStats[cityName].Mean, cityStats[cityName].Max)
 		if i < len(cities)-1 {
-			fmt.Print(", ")
+			result += ", "
 		}
 	}
+	result += "}"
+
+	fmt.Println(result)
 
 	endTime := time.Now()
 	duration := endTime.Sub(startTime)
 
 	fmt.Printf("Execution time: %v\n", duration)
+
+	// Memory profiling
+	f, err = os.Create("mem.prof")
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer f.Close()
+	runtime.GC() // get up-to-date statistics
+	if err := pprof.WriteHeapProfile(f); err != nil {
+		log.Fatal(err)
+	}
 }
 
 func processFile(filename string) {
@@ -216,5 +245,11 @@ func processLine(line string) {
 		}
 	} else {
 		cityData[cityName].Temperatures = append(cityData[cityName].Temperatures, temperature)
+	}
+}
+
+func BenchmarkProcessFile(b *testing.B) {
+	for i := 0; i < b.N; i++ {
+		processFile("measurements.txt")
 	}
 }
