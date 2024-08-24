@@ -31,22 +31,27 @@ type Stats struct {
 var cityStats map[string]Stats
 
 const (
-	POOLS    = 10
-	ROWS     = 1000000000
-	MAX_ROWS = 100000000
+	POOLS           = 10
+	ROWS            = 1000000000
+	MAX_ROWS        = 1000000000
+	CACHE_THRESHOLD = 250000000
 )
 
 func main() {
-
 	cityData = make(map[string]*CityTemperatures)
 
 	cacheFile := "measurements_data_cache.gob"
-	// clearCache(cacheFile)
+	clearCache(cacheFile)
 	_, err := os.Stat(cacheFile)
 	if os.IsNotExist(err) {
 		fmt.Println("cache file not found, processing file...")
 		processFile("measurements.txt")
-		saveCache(cacheFile)
+		if MAX_ROWS <= CACHE_THRESHOLD {
+			fmt.Println("saving cache...")
+			saveCache(cacheFile)
+		} else {
+			fmt.Println("cache threshold not reached, skipping cache save")
+		}
 	} else {
 		fmt.Println("cache file found, loading cache...")
 		loadCache(cacheFile)
@@ -63,8 +68,6 @@ func main() {
 	}
 	defer pprof.StopCPUProfile()
 
-	// fmt.Println("number of cities: %d", len(cityData))
-
 	startTime := time.Now()
 	cityStats = make(map[string]Stats)
 	cities := make([]string, 0, len(cityData))
@@ -72,7 +75,6 @@ func main() {
 		cities = append(cities, cityName)
 	}
 	sort.Strings(cities)
-	// fmt.Println(len(cities))
 
 	result := "{"
 	for i, cityName := range cities {
@@ -158,68 +160,29 @@ func clearCache(filename string) {
 	fmt.Println("cache file removed")
 }
 
-func worker(i int, cities []string, cityName string) {
-	data := cityData[cityName]
-	min := min(data.Temperatures)
-	mean := mean(data.Temperatures)
-	max := max(data.Temperatures)
-	fmt.Printf("%s=%.1f/%.1f/%.1f, ", cityName, min, mean, max)
-	if i < len(cities)-1 {
-		fmt.Print(", ")
-	}
-}
-
 func updateStats(cityTemp *CityTemperatures) {
+	temps := cityTemp.Temperatures
+	if len(temps) == 0 {
+		cityStats[cityTemp.Name] = Stats{Min: 0, Mean: 0, Max: 0}
+		return
+	}
+
+	min, max, sum := temps[0], temps[0], temps[0]
+	for _, temp := range temps[1:] {
+		if temp < min {
+			min = temp
+		}
+		if temp > max {
+			max = temp
+		}
+		sum += temp
+	}
+	mean := sum / float64(len(temps))
 	cityStats[cityTemp.Name] = Stats{
-		Min:  min(cityTemp.Temperatures),
-		Mean: mean(cityTemp.Temperatures),
-		Max:  max(cityTemp.Temperatures),
+		Min:  min,
+		Mean: mean,
+		Max:  max,
 	}
-}
-
-func min(temps []float64) float64 {
-	if len(temps) == 0 {
-		return 0
-	}
-	minTemp := temps[0]
-	for _, temp := range temps[1:] {
-		if temp < minTemp {
-			minTemp = temp
-		}
-	}
-	return minTemp
-}
-
-func sum(temps []float64) float64 {
-	total := 0.0
-	for _, v := range temps {
-		total += v
-	}
-
-	return total
-}
-
-func mean(temps []float64) float64 {
-	var mean float64
-	if len(temps) > 0 {
-		mean = sum(temps) / float64(len(temps))
-	} else {
-		mean = 0.
-	}
-	return mean
-}
-
-func max(temps []float64) float64 {
-	if len(temps) == 0 {
-		return 0
-	}
-	maxTemp := temps[0]
-	for _, temp := range temps[1:] {
-		if temp > maxTemp {
-			maxTemp = temp
-		}
-	}
-	return maxTemp
 }
 
 func processLine(line string) {
