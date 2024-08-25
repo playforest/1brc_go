@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -74,12 +75,34 @@ func main() {
 	for cityName := range cityData {
 		cities = append(cities, cityName)
 	}
-	sort.Strings(cities)
+	sort.Strings(cities) // length: 413 cities
+
+	const POOLS = 10
+	var wg sync.WaitGroup
+
+	citiesPerPool := len(cities) / POOLS
+
+	for pool := 0; pool < POOLS; pool++ {
+		wg.Add(1)
+		go func(poolIndex int) {
+			defer wg.Done()
+			start := poolIndex * citiesPerPool
+			end := start + citiesPerPool
+			if poolIndex == POOLS-1 {
+				end = len(cities)
+			}
+			for i := start; i < end; i++ {
+				cityName := cities[i]
+				data := cityData[cityName]
+				updateStats(data)
+			}
+		}(pool)
+	}
+
+	wg.Wait()
 
 	result := "{"
 	for i, cityName := range cities {
-		data := cityData[cityName]
-		updateStats(data)
 		result += fmt.Sprintf("%s=%.1f/%.1f/%.1f", cityName, cityStats[cityName].Min, cityStats[cityName].Mean, cityStats[cityName].Max)
 		if i < len(cities)-1 {
 			result += ", "
