@@ -22,6 +22,7 @@ type CityTemperatures struct {
 }
 
 var cityData map[string]*CityTemperatures
+var cityStatsMutex sync.Mutex
 
 type Stats struct {
 	Min  float64
@@ -77,7 +78,7 @@ func main() {
 	}
 	sort.Strings(cities) // length: 413 cities
 
-	const POOLS = 10
+	const POOLS = 30
 	var wg sync.WaitGroup
 
 	citiesPerPool := len(cities) / POOLS
@@ -201,11 +202,14 @@ func updateStats(cityTemp *CityTemperatures) {
 		sum += temp
 	}
 	mean := sum / float64(len(temps))
+
+	cityStatsMutex.Lock()
 	cityStats[cityTemp.Name] = Stats{
 		Min:  min,
 		Mean: mean,
 		Max:  max,
 	}
+	cityStatsMutex.Unlock()
 }
 
 func processLine(line string) {
