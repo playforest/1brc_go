@@ -1,9 +1,10 @@
 package main
 
 import (
-	"bufio"
+	"bytes"
 	"encoding/gob"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"runtime"
@@ -32,10 +33,11 @@ type Stats struct {
 var cityStats sync.Map
 
 const (
-	POOLS           = 30
-	ROWS            = 1000000000
-	MAX_ROWS        = 1000000000
-	CACHE_THRESHOLD = 250000000
+	POOLS                 = 10
+	ROWS                  = 1000000000
+	MAX_ROWS              = 1000000000
+	CACHE_THRESHOLD       = 250000000
+	INITIAL_TEMP_CAPACITY = 100000
 )
 
 func main() {
@@ -60,7 +62,7 @@ func main() {
 	_, err = os.Stat(cacheFile)
 	if os.IsNotExist(err) {
 		fmt.Println("cache file not found, processing file...")
-		processFile("measurements.txt")
+		readFile("measurements.txt")
 		if MAX_ROWS <= CACHE_THRESHOLD {
 			fmt.Println("saving cache...")
 			saveCache(cacheFile)
@@ -132,7 +134,7 @@ func main() {
 	}
 }
 
-func processFile(filename string) {
+func readFile(filename string) {
 	file, err := os.Open(filename)
 	if err != nil {
 		fmt.Println(err)
@@ -140,17 +142,33 @@ func processFile(filename string) {
 	}
 	defer file.Close()
 
-	scanner := bufio.NewScanner(file)
-	rowCount := 0
-	for scanner.Scan() && rowCount < MAX_ROWS {
-		line := scanner.Text()
-		processLine(line)
-		rowCount++
+	buffer := make([]byte, 1024*1024*64)
+	leftover := []byte{}
+
+	for {
+		n, err := file.Read(buffer)
+
+		if err != nil && err != io.EOF {
+			fmt.Println(err)
+			return
+		}
+		chunk := append(leftover, buffer[:n]...)
+		lines := bytes.Split(chunk, []byte("\n"))
+
+		for i := 0; i < len(lines)-1; i++ {
+			processLine(string(lines[i]))
+		}
+
+		leftover = lines[len(lines)-1]
+
+		if err == io.EOF {
+			if len(leftover) > 0 {
+				processLine(string(leftover))
+			}
+			break
+		}
 	}
 
-	if err := scanner.Err(); err != nil {
-		fmt.Println("error reading file: ", err)
-	}
 }
 
 func saveCache(filename string) {
@@ -214,33 +232,51 @@ func updateStats(cityTemp *CityTemperatures) {
 }
 
 func processLine(line string) {
-	parts := strings.Split(line, ";")
+	// parts := strings.Split(line, ";")
 
-	if len(parts) != 2 {
+	// if len(parts) != 2 {
+	// 	return
+	// }
+
+	// cityName := parts[0]
+	// temperature, err := strconv.ParseFloat(parts[1], 64)
+
+	colonIndex := strings.IndexByte(line, ';')
+	if colonIndex == -1 {
 		return
 	}
-
-	cityName := parts[0]
-	temperature, err := strconv.ParseFloat(parts[1], 64)
-
+	cityName := line[:colonIndex]
+	temperature, err := strconv.ParseFloat(line[colonIndex+1:], 64)
 	if err != nil {
 		return
 	}
 
-	_, exists := cityData[cityName]
+	city, exists := cityData[cityName]
 
 	if !exists {
 		cityData[cityName] = &CityTemperatures{
 			Name:         cityName,
-			Temperatures: []float64{},
+			Temperatures: make([]float64, 0, INITIAL_TEMP_CAPACITY),
 		}
+		city = cityData[cityName]
 	} else {
-		cityData[cityName].Temperatures = append(cityData[cityName].Temperatures, temperature)
+		temps := city.Temperatures
+		if len(temps) == cap(temps) {
+			newTemps := make([]float64, len(temps), cap(temps)*2)
+			copy(newTemps, temps)
+			city.Temperatures = newTemps
+			temps = newTemps
+		}
+
+		// temps = temps[:len(temps)+1]
+		// temps[len(temps)-1] = temperature
+		// city.Temperatures = temps
 	}
+	city.Temperatures = append(city.Temperatures, temperature)
 }
 
 func BenchmarkProcessFile(b *testing.B) {
 	for i := 0; i < b.N; i++ {
-		processFile("measurements.txt")
+		readFile("measurements.txt")
 	}
 }
