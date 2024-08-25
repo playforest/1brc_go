@@ -10,27 +10,24 @@ import (
 	"runtime"
 	"runtime/pprof"
 	"sort"
-	"strconv"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 )
 
 type CityTemperatures struct {
-	Name         string
-	Temperatures []float64
+	Name string
+	Stats
 }
 
 var cityData map[string]*CityTemperatures
 
 type Stats struct {
-	Min  float64
-	Mean float64
-	Max  float64
+	Min   float64
+	Max   float64
+	Sum   float64
+	Count int
 }
-
-var cityStats sync.Map
 
 const (
 	POOLS                 = 10
@@ -81,34 +78,33 @@ func main() {
 	}
 	sort.Strings(cities) // length: 413 cities
 
-	var wg sync.WaitGroup
+	// var wg sync.WaitGroup
 
-	citiesPerPool := len(cities) / POOLS
+	// citiesPerPool := len(cities) / POOLS
 
-	for pool := 0; pool < POOLS; pool++ {
-		wg.Add(1)
-		go func(poolIndex int) {
-			defer wg.Done()
-			start := poolIndex * citiesPerPool
-			end := start + citiesPerPool
-			if poolIndex == POOLS-1 {
-				end = len(cities)
-			}
-			for i := start; i < end; i++ {
-				cityName := cities[i]
-				data := cityData[cityName]
-				updateStats(data)
-			}
-		}(pool)
-	}
+	// for pool := 0; pool < POOLS; pool++ {
+	// 	wg.Add(1)
+	// 	go func(poolIndex int) {
+	// 		defer wg.Done()
+	// 		start := poolIndex * citiesPerPool
+	// 		end := start + citiesPerPool
+	// 		if poolIndex == POOLS-1 {
+	// 			end = len(cities)
+	// 		}
+	// 		for i := start; i < end; i++ {
+	// 			cityName := cities[i]
+	// 			data := cityData[cityName]
+	// 			updateStats(data)
+	// 		}
+	// 	}(pool)
+	// }
 
-	wg.Wait()
+	// wg.Wait()
 
 	result := "{"
 	for i, cityName := range cities {
-		stats, _ := cityStats.Load(cityName)
-		typedStats := stats.(Stats)
-		result += fmt.Sprintf("%s=%.1f/%.1f/%.1f", cityName, typedStats.Min, typedStats.Mean, typedStats.Max)
+
+		result += fmt.Sprintf("%s=%.1f/%.1f/%.1f", cityName, cityData[cityName].Min, cityData[cityName].Sum/float64(cityData[cityName].Count), cityData[cityName].Max)
 		if i < len(cities)-1 {
 			result += ", "
 		}
@@ -204,49 +200,59 @@ func clearCache(filename string) {
 	fmt.Println("cache file removed")
 }
 
-func updateStats(cityTemp *CityTemperatures) {
-	temps := cityTemp.Temperatures
-	if len(temps) == 0 {
-		cityStats.Store(cityTemp.Name, Stats{Min: 0, Mean: 0, Max: 0})
-		return
+func fastParseFloat(s string) (float64, error) {
+	if len(s) == 0 {
+		return 0, fmt.Errorf("empty string")
 	}
 
-	min, max, sum := temps[0], temps[0], temps[0]
-	for _, temp := range temps[1:] {
-		if temp < min {
-			min = temp
+	var result float64
+	var negative bool
+	var decimal bool
+	var decimalPlaces float64 = 1
+
+	for i := 0; i < len(s); i++ {
+		switch s[i] {
+		case '-':
+			if i != 0 {
+				return 0, fmt.Errorf("misplaced minus sign")
+			}
+			negative = true
+		case '.':
+			if decimal {
+				return 0, fmt.Errorf("multiple decimal points")
+			}
+			decimal = true
+		case '0', '1', '2', '3', '4', '5', '6', '7', '8', '9':
+			// convert ascii digit to float64 by subtracting the ascii value of '0'.
+			// this works because ascii digits are represented by consecutive byte values:
+			// '0' = 48, '1' = 49, '2' = 50, etc.
+			// example: for s[i] = '7' (ascii 55), '7' - '0' = 55 - 48 = 7
+			digit := float64(s[i] - '0')
+			if decimal {
+				decimalPlaces *= 10
+				result += digit / decimalPlaces
+			} else {
+				result = result*10 + digit
+			}
+		default:
+			return 0, fmt.Errorf("invalid character: %c", s[i])
 		}
-		if temp > max {
-			max = temp
-		}
-		sum += temp
 	}
-	mean := sum / float64(len(temps))
 
-	cityStats.Store(cityTemp.Name, Stats{
-		Min:  min,
-		Mean: mean,
-		Max:  max,
-	})
+	if negative {
+		result = -result
+	}
 
+	return result, nil
 }
 
 func processLine(line string) {
-	// parts := strings.Split(line, ";")
-
-	// if len(parts) != 2 {
-	// 	return
-	// }
-
-	// cityName := parts[0]
-	// temperature, err := strconv.ParseFloat(parts[1], 64)
-
 	colonIndex := strings.IndexByte(line, ';')
 	if colonIndex == -1 {
 		return
 	}
 	cityName := line[:colonIndex]
-	temperature, err := strconv.ParseFloat(line[colonIndex+1:], 64)
+	temperature, err := fastParseFloat(line[colonIndex+1:])
 	if err != nil {
 		return
 	}
@@ -255,24 +261,25 @@ func processLine(line string) {
 
 	if !exists {
 		cityData[cityName] = &CityTemperatures{
-			Name:         cityName,
-			Temperatures: make([]float64, 0, INITIAL_TEMP_CAPACITY),
-		}
-		city = cityData[cityName]
-	} else {
-		temps := city.Temperatures
-		if len(temps) == cap(temps) {
-			newTemps := make([]float64, len(temps), cap(temps)*2)
-			copy(newTemps, temps)
-			city.Temperatures = newTemps
-			temps = newTemps
+			Name: cityName,
+			Stats: Stats{
+				Min:   temperature,
+				Max:   temperature,
+				Sum:   temperature,
+				Count: 1,
+			},
 		}
 
-		// temps = temps[:len(temps)+1]
-		// temps[len(temps)-1] = temperature
-		// city.Temperatures = temps
+	} else {
+		if temperature < city.Min {
+			city.Min = temperature
+		}
+		if temperature > city.Max {
+			city.Max = temperature
+		}
+		city.Sum += temperature
+		city.Count++
 	}
-	city.Temperatures = append(city.Temperatures, temperature)
 }
 
 func BenchmarkProcessFile(b *testing.B) {
