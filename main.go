@@ -22,7 +22,6 @@ type CityTemperatures struct {
 }
 
 var cityData map[string]*CityTemperatures
-var cityStatsMutex sync.Mutex
 
 type Stats struct {
 	Min  float64
@@ -30,21 +29,35 @@ type Stats struct {
 	Max  float64
 }
 
-var cityStats map[string]Stats
+var cityStats sync.Map
 
 const (
-	POOLS           = 10
+	POOLS           = 30
 	ROWS            = 1000000000
 	MAX_ROWS        = 1000000000
 	CACHE_THRESHOLD = 250000000
 )
 
 func main() {
+	// Start CPU profiling here
+	f, err := os.Create("cpu.prof")
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer f.Close()
+	if err := pprof.StartCPUProfile(f); err != nil {
+		log.Fatal(err)
+	}
+	defer pprof.StopCPUProfile()
+
 	cityData = make(map[string]*CityTemperatures)
 
 	cacheFile := "measurements_data_cache.gob"
 	clearCache(cacheFile)
-	_, err := os.Stat(cacheFile)
+
+	startTime := time.Now()
+
+	_, err = os.Stat(cacheFile)
 	if os.IsNotExist(err) {
 		fmt.Println("cache file not found, processing file...")
 		processFile("measurements.txt")
@@ -59,26 +72,13 @@ func main() {
 		loadCache(cacheFile)
 	}
 
-	// Start CPU profiling here
-	f, err := os.Create("cpu.prof")
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer f.Close()
-	if err := pprof.StartCPUProfile(f); err != nil {
-		log.Fatal(err)
-	}
-	defer pprof.StopCPUProfile()
-
-	startTime := time.Now()
-	cityStats = make(map[string]Stats)
+	// cityStats = make(map[string]Stats)
 	cities := make([]string, 0, len(cityData))
 	for cityName := range cityData {
 		cities = append(cities, cityName)
 	}
 	sort.Strings(cities) // length: 413 cities
 
-	const POOLS = 30
 	var wg sync.WaitGroup
 
 	citiesPerPool := len(cities) / POOLS
@@ -104,7 +104,9 @@ func main() {
 
 	result := "{"
 	for i, cityName := range cities {
-		result += fmt.Sprintf("%s=%.1f/%.1f/%.1f", cityName, cityStats[cityName].Min, cityStats[cityName].Mean, cityStats[cityName].Max)
+		stats, _ := cityStats.Load(cityName)
+		typedStats := stats.(Stats)
+		result += fmt.Sprintf("%s=%.1f/%.1f/%.1f", cityName, typedStats.Min, typedStats.Mean, typedStats.Max)
 		if i < len(cities)-1 {
 			result += ", "
 		}
@@ -116,7 +118,7 @@ func main() {
 	endTime := time.Now()
 	duration := endTime.Sub(startTime)
 
-	fmt.Printf("Execution time: %v\n", duration)
+	fmt.Printf("Pools: %d, Execution time: %v\n", POOLS, duration)
 
 	// Memory profiling
 	f, err = os.Create("mem.prof")
@@ -187,7 +189,7 @@ func clearCache(filename string) {
 func updateStats(cityTemp *CityTemperatures) {
 	temps := cityTemp.Temperatures
 	if len(temps) == 0 {
-		cityStats[cityTemp.Name] = Stats{Min: 0, Mean: 0, Max: 0}
+		cityStats.Store(cityTemp.Name, Stats{Min: 0, Mean: 0, Max: 0})
 		return
 	}
 
@@ -203,13 +205,12 @@ func updateStats(cityTemp *CityTemperatures) {
 	}
 	mean := sum / float64(len(temps))
 
-	cityStatsMutex.Lock()
-	cityStats[cityTemp.Name] = Stats{
+	cityStats.Store(cityTemp.Name, Stats{
 		Min:  min,
 		Mean: mean,
 		Max:  max,
-	}
-	cityStatsMutex.Unlock()
+	})
+
 }
 
 func processLine(line string) {
