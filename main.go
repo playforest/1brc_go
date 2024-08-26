@@ -2,17 +2,15 @@ package main
 
 import (
 	"bytes"
-	"encoding/gob"
 	"fmt"
 	"io"
-	"log"
 	"os"
-	"runtime"
-	"runtime/pprof"
 	"sort"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/playforest/1brc_go/utils"
 )
 
 type CityTemperatures struct {
@@ -38,38 +36,13 @@ const (
 )
 
 func main() {
-	// Start CPU profiling here
-	f, err := os.Create("cpu.prof")
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer f.Close()
-	if err := pprof.StartCPUProfile(f); err != nil {
-		log.Fatal(err)
-	}
-	defer pprof.StopCPUProfile()
+	utils.StartCPUProfiling("cpu.prof")
+	defer utils.StopCPUProfiling()
 
 	cityData = make(map[string]*CityTemperatures)
 
-	cacheFile := "measurements_data_cache.gob"
-	clearCache(cacheFile)
-
 	startTime := time.Now()
-
-	_, err = os.Stat(cacheFile)
-	if os.IsNotExist(err) {
-		fmt.Println("cache file not found, processing file...")
-		readFile("measurements.txt")
-		if MAX_ROWS <= CACHE_THRESHOLD {
-			fmt.Println("saving cache...")
-			saveCache(cacheFile)
-		} else {
-			fmt.Println("cache threshold not reached, skipping cache save")
-		}
-	} else {
-		fmt.Println("cache file found, loading cache...")
-		loadCache(cacheFile)
-	}
+	readFile("measurements.txt")
 
 	// cityStats = make(map[string]Stats)
 	cities := make([]string, 0, len(cityData))
@@ -118,16 +91,7 @@ func main() {
 
 	fmt.Printf("Pools: %d, Execution time: %v\n", POOLS, duration)
 
-	// Memory profiling
-	f, err = os.Create("mem.prof")
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer f.Close()
-	runtime.GC() // get up-to-date statistics
-	if err := pprof.WriteHeapProfile(f); err != nil {
-		log.Fatal(err)
-	}
+	utils.WriteMemoryProfile("mem.prof")
 }
 
 func readFile(filename string) {
@@ -165,39 +129,6 @@ func readFile(filename string) {
 		}
 	}
 
-}
-
-func saveCache(filename string) {
-	file, err := os.Create(filename)
-	if err != nil {
-		fmt.Println("error creating cache file: ", err)
-		return
-	}
-	defer file.Close()
-
-	encoder := gob.NewEncoder(file)
-	encoder.Encode(cityData)
-
-	if err != nil {
-		fmt.Println("error encoding cache file: ", err)
-	}
-}
-
-func loadCache(filename string) {
-	file, err := os.Open(filename)
-	if err != nil {
-		fmt.Println("error opening cache file: ", err)
-		return
-	}
-	defer file.Close()
-
-	decoder := gob.NewDecoder(file)
-	decoder.Decode(&cityData)
-}
-
-func clearCache(filename string) {
-	os.Remove(filename)
-	fmt.Println("cache file removed")
 }
 
 func fastParseFloat(s string) (float64, error) {
