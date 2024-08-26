@@ -26,3 +26,5 @@ go.work.sum
 
 # data
 measurements.txt
+
+utils/create-data
