@@ -6,7 +6,6 @@ import (
 	"io"
 	"os"
 	"sort"
-	"strings"
 	"testing"
 	"time"
 
@@ -36,12 +35,15 @@ const (
 )
 
 func main() {
-	utils.StartCPUProfiling("cpu.prof")
+	cpuProfilePath := "profiler/cpu.prof"
+	memProfilePath := "profiler/mem.prof"
+	utils.StartCPUProfiling(cpuProfilePath)
 	defer utils.StopCPUProfiling()
-
-	cityData = make(map[string]*CityTemperatures)
+	defer utils.ExportTopFunctionsByTime(cpuProfilePath, "profiler", 20)
 
 	startTime := time.Now()
+
+	cityData = make(map[string]*CityTemperatures)
 	readFile("measurements.txt")
 
 	// cityStats = make(map[string]Stats)
@@ -50,29 +52,6 @@ func main() {
 		cities = append(cities, cityName)
 	}
 	sort.Strings(cities) // length: 413 cities
-
-	// var wg sync.WaitGroup
-
-	// citiesPerPool := len(cities) / POOLS
-
-	// for pool := 0; pool < POOLS; pool++ {
-	// 	wg.Add(1)
-	// 	go func(poolIndex int) {
-	// 		defer wg.Done()
-	// 		start := poolIndex * citiesPerPool
-	// 		end := start + citiesPerPool
-	// 		if poolIndex == POOLS-1 {
-	// 			end = len(cities)
-	// 		}
-	// 		for i := start; i < end; i++ {
-	// 			cityName := cities[i]
-	// 			data := cityData[cityName]
-	// 			updateStats(data)
-	// 		}
-	// 	}(pool)
-	// }
-
-	// wg.Wait()
 
 	result := "{"
 	for i, cityName := range cities {
@@ -91,7 +70,7 @@ func main() {
 
 	fmt.Printf("Pools: %d, Execution time: %v\n", POOLS, duration)
 
-	utils.WriteMemoryProfile("mem.prof")
+	utils.WriteMemoryProfile(memProfilePath)
 }
 
 func readFile(filename string) {
@@ -177,8 +156,25 @@ func fastParseFloat(s string) (float64, error) {
 	return result, nil
 }
 
+func fastIndexOfByte(s string, c string) int {
+	if len(c) != 1 {
+		fmt.Errorf("c must be a single letter character")
+		return -1
+	}
+
+	target := c[0]
+
+	for i := 0; i < len(s); i++ {
+		if s[i] == target {
+			return i
+		}
+	}
+	return -1
+}
+
 func processLine(line string) {
-	colonIndex := strings.IndexByte(line, ';')
+	colonIndex := fastIndexOfByte(line, ";")
+	// colonIndex := strings.IndexByte(line, ';')
 	if colonIndex == -1 {
 		return
 	}
