@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"sort"
 	"testing"
@@ -37,9 +38,12 @@ const (
 func main() {
 	cpuProfilePath := "profiler/cpu.prof"
 	memProfilePath := "profiler/mem.prof"
-	utils.StartCPUProfiling(cpuProfilePath)
+	// Start CPU profiling
+	if err := utils.StartCPUProfiling(cpuProfilePath); err != nil {
+		log.Printf("Failed to start CPU profiling: %v", err)
+		return
+	}
 	defer utils.StopCPUProfiling()
-	defer utils.ExportTopFunctionsByTime(cpuProfilePath, "profiler", 20)
 
 	startTime := time.Now()
 
@@ -81,16 +85,21 @@ func readFile(filename string) {
 	}
 	defer file.Close()
 
-	buffer := make([]byte, 1024*1024*64)
+	buffer := make([]byte, 2048*2048)
 	leftover := []byte{}
 
 	for {
 		n, err := file.Read(buffer)
-
-		if err != nil && err != io.EOF {
-			fmt.Println(err)
-			return
+		if err == io.EOF {
+			if len(leftover) > 0 {
+				processLine(string(leftover))
+			}
+			break
 		}
+		if err != nil {
+			panic(err)
+		}
+
 		chunk := append(leftover, buffer[:n]...)
 		lines := bytes.Split(chunk, []byte("\n"))
 
@@ -100,14 +109,44 @@ func readFile(filename string) {
 
 		leftover = lines[len(lines)-1]
 
-		if err == io.EOF {
-			if len(leftover) > 0 {
-				processLine(string(leftover))
-			}
-			break
-		}
 	}
 
+}
+
+func processLine(line string) {
+	colonIndex := fastIndexOfByte(line, ";")
+	if colonIndex == -1 {
+		return
+	}
+	cityName := line[:colonIndex]
+	temperature, err := fastParseFloat(line[colonIndex+1:])
+	if err != nil {
+		return
+	}
+
+	city, exists := cityData[cityName]
+
+	if !exists {
+		cityData[cityName] = &CityTemperatures{
+			Name: cityName,
+			Stats: Stats{
+				Min:   temperature,
+				Max:   temperature,
+				Sum:   temperature,
+				Count: 1,
+			},
+		}
+
+	} else {
+		if temperature < city.Min {
+			city.Min = temperature
+		}
+		if temperature > city.Max {
+			city.Max = temperature
+		}
+		city.Sum += temperature
+		city.Count++
+	}
 }
 
 func fastParseFloat(s string) (float64, error) {
@@ -170,43 +209,6 @@ func fastIndexOfByte(s string, c string) int {
 		}
 	}
 	return -1
-}
-
-func processLine(line string) {
-	colonIndex := fastIndexOfByte(line, ";")
-	// colonIndex := strings.IndexByte(line, ';')
-	if colonIndex == -1 {
-		return
-	}
-	cityName := line[:colonIndex]
-	temperature, err := fastParseFloat(line[colonIndex+1:])
-	if err != nil {
-		return
-	}
-
-	city, exists := cityData[cityName]
-
-	if !exists {
-		cityData[cityName] = &CityTemperatures{
-			Name: cityName,
-			Stats: Stats{
-				Min:   temperature,
-				Max:   temperature,
-				Sum:   temperature,
-				Count: 1,
-			},
-		}
-
-	} else {
-		if temperature < city.Min {
-			city.Min = temperature
-		}
-		if temperature > city.Max {
-			city.Max = temperature
-		}
-		city.Sum += temperature
-		city.Count++
-	}
 }
 
 func BenchmarkProcessFile(b *testing.B) {
