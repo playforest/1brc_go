@@ -1,6 +1,7 @@
 package utils
 
 import (
+	"bytes"
 	"encoding/gob"
 	"fmt"
 	"log"
@@ -48,18 +49,27 @@ func ClearCache(filename string) {
 	fmt.Println("cache file removed")
 }
 
-func StartCPUProfiling(filename string) {
-	f, err := os.Create(filename)
+var cpuFile *os.File
+
+func StartCPUProfiling(filename string) error {
+	var err error
+	cpuFile, err = os.Create(filename)
 	if err != nil {
-		log.Fatal(err)
+		return fmt.Errorf("could not create CPU profile: %v", err)
 	}
-	if err := pprof.StartCPUProfile(f); err != nil {
-		log.Fatal(err)
+	if err := pprof.StartCPUProfile(cpuFile); err != nil {
+		cpuFile.Close()
+		return fmt.Errorf("could not start CPU profile: %v", err)
 	}
+	return nil
 }
 
 func StopCPUProfiling() {
 	pprof.StopCPUProfile()
+	if cpuFile != nil {
+		cpuFile.Close()
+		cpuFile = nil
+	}
 }
 
 func WriteMemoryProfile(filename string) {
@@ -86,12 +96,20 @@ func ExportTopFunctionsByTime(cpuProfilePath, outputDir string, topCount int) {
 	}
 
 	cmd := exec.Command("go", "tool", "pprof", "-top", "-cum", fmt.Sprintf("-nodecount=%d", topCount), cpuProfilePath)
-	output, err := cmd.Output()
+
+	// Capture both stdout and stderr
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	err := cmd.Run()
 	if err != nil {
 		log.Printf("Error running pprof: %v", err)
+		log.Printf("Stderr: %s", stderr.String())
 		return
 	}
 
+	output := stdout.Bytes()
 	err = os.WriteFile(outputPath, output, 0644)
 	if err != nil {
 		log.Printf("Error writing to file: %v", err)
@@ -99,4 +117,7 @@ func ExportTopFunctionsByTime(cpuProfilePath, outputDir string, topCount int) {
 	}
 
 	fmt.Printf("Top %d functions by time exported to %s\n", topCount, outputPath)
+
+	// Print the output to console as well
+	fmt.Println(string(output))
 }
